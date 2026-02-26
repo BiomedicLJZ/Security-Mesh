@@ -1,11 +1,23 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const uuid_1 = require("uuid");
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const store_1 = require("../store");
 const aiService_1 = require("../aiService");
 const websocket_1 = require("../websocket");
 const router = (0, express_1.Router)();
+// Rate limiter: max 30 incident submissions per minute per IP
+const incidentLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many incident reports submitted. Please wait before trying again.' },
+});
 // GET /api/incidents – list all incidents (newest first)
 router.get('/', (_req, res) => {
     const sorted = [...store_1.incidents].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -20,8 +32,8 @@ router.get('/:id', (req, res) => {
     }
     res.json(incident);
 });
-// POST /api/incidents – ingest a new incident
-router.post('/', (req, res) => {
+// POST /api/incidents – ingest a new incident (rate-limited)
+router.post('/', incidentLimiter, (req, res) => {
     const body = req.body;
     if (!body.title || !body.description || !body.location || !body.reporterName) {
         res.status(400).json({ error: 'Missing required fields: title, description, location, reporterName' });

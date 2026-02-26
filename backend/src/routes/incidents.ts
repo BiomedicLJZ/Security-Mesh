@@ -1,11 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import rateLimit from 'express-rate-limit';
 import { incidents, alerts } from '../store';
 import { catalogIncident } from '../aiService';
 import { broadcast } from '../websocket';
 import { Incident, Alert, CreateIncidentPayload } from '../models';
 
 const router = Router();
+
+// Rate limiter: max 30 incident submissions per minute per IP
+const incidentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many incident reports submitted. Please wait before trying again.' },
+});
 
 // GET /api/incidents – list all incidents (newest first)
 router.get('/', (_req: Request, res: Response) => {
@@ -25,8 +35,8 @@ router.get('/:id', (req: Request, res: Response) => {
   res.json(incident);
 });
 
-// POST /api/incidents – ingest a new incident
-router.post('/', (req: Request, res: Response) => {
+// POST /api/incidents – ingest a new incident (rate-limited)
+router.post('/', incidentLimiter, (req: Request, res: Response) => {
   const body = req.body as CreateIncidentPayload;
 
   if (!body.title || !body.description || !body.location || !body.reporterName) {
