@@ -1,0 +1,34 @@
+openapi: 3.0.3
+info:
+  title: SentinelMesh Core Service
+  version: "0.1.0"
+paths:
+  /v1/incidents/{incident_id}:
+    get:
+      summary: Get incident by ID
+      parameters:
+        - in: path
+          name: incident_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: incident
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  trace_id: { type: string }
+                  category: { type: string }
+                  confidence: { type: number }
+                  lat: { type: number, nullable: true }
+                  lon: { type: number, nullable: true }
+                  citizen_id: { type: string, nullable: true }
+                  officer_id: { type: string, nullable: true }
+                  eta_seconds: { type: integer, nullable: true }
+                  distance_meters: { type: number, nullable: true }
+        "404":
+          description: incident_not_found

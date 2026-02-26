@@ -1,0 +1,25 @@
+{
+  "$id": "anomaly.high_confidence.v1",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "source", "trace_id", "payload"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "const": "anomaly.high_confidence" },
+    "schema_version": { "const": "v1" },
+    "occurred_at": { "type": "string" },
+    "source": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "payload": {
+      "type": "object",
+      "required": ["category", "confidence", "lat", "lon", "citizen_id"],
+      "properties": {
+        "category": { "type": "string" },
+        "confidence": { "type": "number" },
+        "lat": { "type": "number" },
+        "lon": { "type": "number" },
+        "citizen_id": { "type": "string" },
+        "evidence_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

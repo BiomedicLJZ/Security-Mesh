@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package sentinelmesh.dispatch;
+
+service DispatchService {
+  rpc GetInterceptRoute(InterceptRequest) returns (InterceptResponse);
+}
+
+message InterceptRequest {
+  string incident_id = 1;
+  double incident_lat = 2;
+  double incident_lon = 3;
+
+  string officer_id = 4;
+  double officer_lat = 5;
+  double officer_lon = 6;
+}
+
+message InterceptResponse {
+  string incident_id = 1;
+  string officer_id = 2;
+
+  double distance_meters = 3;
+  int32 eta_seconds = 4;
+
+  // Simplificado: una "polyline" textual mock
+  string route_polyline = 5;
+}

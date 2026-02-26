@@ -1,0 +1,30 @@
+{
+  "$id": "telemetry.raw.v1",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "source", "trace_id", "payload"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "const": "telemetry.raw" },
+    "schema_version": { "const": "v1" },
+    "occurred_at": { "type": "string" },
+    "source": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "payload": {
+      "type": "object",
+      "required": ["citizen_id", "lat", "lon", "emergency", "signals"],
+      "properties": {
+        "citizen_id": { "type": "string" },
+        "lat": { "type": "number" },
+        "lon": { "type": "number" },
+        "emergency": { "type": "boolean" },
+        "signals": {
+          "type": "object",
+          "properties": {
+            "audio_signature": { "type": "string" },
+            "panic_motion": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

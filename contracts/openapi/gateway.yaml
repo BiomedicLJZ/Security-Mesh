@@ -1,0 +1,25 @@
+openapi: 3.0.3
+info:
+  title: SentinelMesh Gateway
+  version: "0.1.0"
+paths:
+  /v1/emergency/report:
+    post:
+      summary: Submit emergency report (publishes telemetry.raw.v1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [citizen_id, lat, lon, emergency]
+              properties:
+                citizen_id: { type: string }
+                lat: { type: number }
+                lon: { type: number }
+                emergency: { type: boolean }
+                audio_signature: { type: string, nullable: true }
+                panic_motion: { type: boolean }
+      responses:
+        "200":
+          description: accepted
