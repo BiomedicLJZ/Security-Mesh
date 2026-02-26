@@ -1,0 +1,96 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.9
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+
+  kafka-init:
+    image: redpandadata/redpanda:v24.2.9
+    depends_on:
+      - redpanda
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      "
+      until rpk cluster info --brokers redpanda:9092; do echo 'waiting for redpanda...'; sleep 1; done;
+      rpk topic create telemetry.raw.v1 --brokers redpanda:9092 || true;
+      rpk topic create anomaly.high_confidence.v1 --brokers redpanda:9092 || true;
+      rpk topic create dispatch.route_assigned.v1 --brokers redpanda:9092 || true;
+      echo 'topics ready';
+      "
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sentinelmesh
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  dispatch-service:
+    build: ../services/dispatch-service
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "50051:50051"
+    depends_on:
+      - redpanda
+
+  core-service:
+    build: ../services/core-service
+    env_file:
+      - ../.env.example
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8002:8000"
+    depends_on:
+      - redpanda
+      - postgres
+      - dispatch-service
+      - kafka-init
+
+  ai-engine:
+    build: ../services/ai-engine
+    env_file:
+      - ../.env.example
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - redpanda
+      - kafka-init
+
+  gateway:
+    build: ../services/gateway
+    env_file:
+      - ../.env.example
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8001:8000"
+    depends_on:
+      - redpanda
+      - kafka-init
+      - core-service
+
+volumes:
+  pgdata:

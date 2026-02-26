@@ -1,0 +1,23 @@
+{
+  "$id": "dispatch.route_assigned.v1",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "source", "trace_id", "payload"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "const": "dispatch.route_assigned" },
+    "schema_version": { "const": "v1" },
+    "occurred_at": { "type": "string" },
+    "source": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "payload": {
+      "type": "object",
+      "required": ["incident_id", "officer_id", "eta_seconds", "distance_meters"],
+      "properties": {
+        "incident_id": { "type": "string" },
+        "officer_id": { "type": "string" },
+        "eta_seconds": { "type": "integer" },
+        "distance_meters": { "type": "number" }
+      }
+    }
+  }
+}
