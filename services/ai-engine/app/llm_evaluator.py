@@ -1,17 +1,16 @@
-"""LLM/SLM-based anomaly evaluation for teaching purposes.
+"""LangGraph-based anomaly evaluator with pluggable LLM/SLM providers.
 
-This module intentionally favors readability over compactness so students can
-inspect each step in the chain/graph pipeline:
+Pipeline implemented in this module (intentionally explicit for teaching):
+1. Normalize incoming telemetry into a compact model payload.
+2. Build a strict prompt contract asking for JSON-only output.
+3. Invoke a chat model through LangChain.
+4. Parse/validate model output defensively.
+5. Return `(category, confidence)` or `None` for no escalation.
 
-1) Normalize telemetry event into a model-friendly dict.
-2) Build a constrained prompt that asks for strict JSON.
-3) Run a LangGraph with explicit nodes.
-4) Parse and validate the model output.
-5) Return a tuple(category, confidence) compatible with the existing pipeline.
-
-The graph supports two model backends:
-- OpenAI-compatible chat models via ``langchain-openai``.
-- Local Ollama models (often used as SLMs) via ``langchain-ollama``.
+Supported providers:
+- `openai`  -> `langchain-openai` (`OPENAI_API_KEY`)
+- `gemini`  -> `langchain-google-genai` (`GOOGLE_API_KEY`)
+- `ollama`  -> `langchain-ollama` (local/runtime-hosted SLM)
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from langgraph.graph import END, START, StateGraph
 
 
 class EvaluationState(TypedDict):
-    """State container used by LangGraph nodes."""
+    """State shared across LangGraph nodes."""
 
     telemetry_event: dict[str, Any]
     prompt_messages: list[Any]
@@ -36,7 +35,7 @@ class EvaluationState(TypedDict):
 
 @dataclass
 class EvaluatorConfig:
-    """Runtime configuration loaded from environment variables."""
+    """Runtime configuration for the evaluator."""
 
     provider: str = os.getenv("LLM_PROVIDER", "openai").lower()
     model_name: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
@@ -44,7 +43,7 @@ class EvaluatorConfig:
 
 
 class LLMEvaluator:
-    """Evaluate telemetry messages with a LangGraph pipeline."""
+    """Telemetry anomaly evaluator backed by a LangGraph workflow."""
 
     def __init__(self, config: EvaluatorConfig | None = None):
         self.config = config or EvaluatorConfig()
@@ -52,14 +51,27 @@ class LLMEvaluator:
         self.graph = self._build_graph()
 
     def _build_model(self):
-        if self.config.provider == "ollama":
+        provider = self.config.provider
+
+        if provider == "ollama":
             from langchain_ollama import ChatOllama
 
             return ChatOllama(model=self.config.model_name, temperature=self.config.temperature)
 
-        from langchain_openai import ChatOpenAI
+        if provider in ("google", "gemini"):
+            from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatOpenAI(model=self.config.model_name, temperature=self.config.temperature)
+            return ChatGoogleGenerativeAI(
+                model=self.config.model_name,
+                temperature=self.config.temperature,
+            )
+
+        if provider == "openai":
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(model=self.config.model_name, temperature=self.config.temperature)
+
+        raise ValueError(f"Unsupported LLM_PROVIDER='{provider}'. Use openai|gemini|ollama.")
 
     def _normalize_event(self, event: dict[str, Any]) -> dict[str, Any]:
         payload = event.get("payload", {}) or {}
@@ -78,17 +90,17 @@ class LLMEvaluator:
 
         system = SystemMessage(
             content=(
-                "You are a safety incident classifier. "
-                "Return ONLY compact JSON with keys: trigger:boolean, "
+                "You are a safety incident classifier for emergency telemetry. "
+                "Return only compact JSON with keys: trigger:boolean, "
                 "category:string, confidence:number(0..1), rationale:string."
             )
         )
         human = HumanMessage(
             content=(
-                "Classify whether this telemetry requires escalation.\n"
+                "Evaluate if this event should be escalated as anomaly.high_confidence.\n"
                 f"Telemetry: {json.dumps(telemetry, ensure_ascii=False)}\n"
-                "Rules of thumb: gunshot-like sounds + emergency are very high confidence; "
-                "panic motion + emergency is medium confidence; emergency alone is moderate."
+                "Heuristic prior: emergency+gunshot-like audio => very high confidence; "
+                "emergency+panic motion => medium confidence; emergency alone => moderate confidence."
             )
         )
 
@@ -106,7 +118,6 @@ class LLMEvaluator:
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            # Defensive fallback when model returns prose around JSON.
             start = text.find("{")
             end = text.rfind("}")
             if start >= 0 and end > start:

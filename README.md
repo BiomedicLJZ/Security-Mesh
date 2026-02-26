@@ -1,137 +1,90 @@
-# SentinelMesh — Didactic Starter Kit (Walking Skeleton)
+# SentinelMesh — Technical Teaching Skeleton
 
-Starter kit local para enseñar un flujo real de software distribuido:
+SentinelMesh is a compact distributed-systems reference project designed for classroom use.
+It demonstrates a production-style event flow:
 
-**gateway → Kafka/Redpanda → AI engine → core-service → gRPC dispatch → Postgres**.
+`gateway (HTTP) -> Kafka/Redpanda -> ai-engine (inference) -> core-service (state/orchestration) -> dispatch-service (gRPC) -> Postgres`
 
-El objetivo no es solo “que corra”, sino que el estudiante entienda:
-- Diseño por contratos.
-- Integración síncrona (HTTP/gRPC) y asíncrona (Kafka).
-- Trazabilidad (`trace_id`) de punta a punta.
-- Evolución de servicios sin romper consumidores.
+## 1) System topology and module responsibilities
 
----
+### 1.1 `services/gateway` (ingress API)
+- **Purpose:** accept citizen emergency reports over HTTP.
+- **Main module:** `app/main.py`
+  - validates request body with Pydantic;
+  - generates `trace_id` + `event_id`;
+  - publishes `telemetry.raw.v1` to Kafka.
+- **Support module:** `app/kafka_client.py` (producer setup).
 
-## 1) Arquitectura por nodos (qué hace cada módulo)
+### 1.2 `services/ai-engine` (classification worker)
+- **Purpose:** consume telemetry and decide whether to emit high-confidence anomaly events.
+- **Main module:** `app/main.py`
+  - consumes `telemetry.raw.v1`;
+  - runs selected evaluator strategy;
+  - publishes `anomaly.high_confidence.v1`.
+- **Strategies:**
+  - `app/rules.py` -> deterministic baseline rules.
+  - `app/llm_evaluator.py` -> LangGraph pipeline over LLM/SLM.
+- **Support module:** `app/kafka_client.py` (consumer + producer setup).
 
-### Nodo A — `services/gateway`
-**Rol:** API pública de entrada (FastAPI).
+### 1.3 `services/core-service` (domain orchestrator)
+- **Purpose:** persist incidents, call dispatch planner, emit route assignment events.
+- **Main modules:**
+  - `app/consumer.py`: consumes anomalies, persists incident, calls gRPC dispatch, publishes dispatch event.
+  - `app/main.py`: read API (`GET /v1/incidents/{incident_id}`).
+  - `app/db.py`: PostgreSQL connection and schema bootstrap.
+  - `app/grpc_client.py`: typed gRPC client.
 
-**Módulos:**
-- `app/main.py`: endpoint `/v1/emergency/report`, construye el evento `telemetry.raw.v1`.
-- `app/kafka_client.py`: productor Kafka reutilizable.
+### 1.4 `services/dispatch-service` (gRPC computation)
+- **Purpose:** route/ETA microservice contract.
+- **Main module:** `app/server.py` (implements `GetInterceptRoute`).
+- **Generated modules:** `dispatch_pb2.py`, `dispatch_pb2_grpc.py` from `contracts/proto/dispatch.proto`.
 
-**Conceptos didácticos:**
-- Validación de entrada con Pydantic.
-- Diferencia entre respuesta HTTP “accepted” y procesamiento real eventual.
-
-### Nodo B — `services/ai-engine`
-**Rol:** Consumidor de telemetría y clasificador de anomalías.
-
-**Módulos:**
-- `app/main.py`: loop de consumo/publicación.
-- `app/rules.py`: heurísticas determinísticas (baseline pedagógico).
-- `app/llm_evaluator.py`: integración LangChain + LangGraph para clasificación con LLM/SLM.
-- `app/kafka_client.py`: consumidor/productor Kafka.
-
-**Conceptos didácticos:**
-- Estrategias de inferencia intercambiables (`heuristic` vs `langgraph`).
-- Diseño con fallback para no romper servicio por errores de IA.
-
-### Nodo C — `services/core-service`
-**Rol:** Orquestador de dominio + persistencia + llamada gRPC.
-
-**Módulos:**
-- `app/main.py`: API de consulta de incidentes.
-- `app/consumer.py`: consume `anomaly.high_confidence.v1`, guarda incidente y publica asignación.
-- `app/db.py`: conexión e inicialización de tabla.
-- `app/grpc_client.py`: cliente gRPC a `dispatch-service`.
-- `app/models.py`: contratos de salida del API.
-
-**Conceptos didácticos:**
-- Persistencia y eventual consistency.
-- Upsert como base para idempotencia.
-
-### Nodo D — `services/dispatch-service`
-**Rol:** microservicio gRPC para cálculo de ruta/ETA.
-
-**Módulos:**
-- `app/server.py`: implementación gRPC.
-- `app/dispatch_pb2*.py`: stubs generados desde proto.
-
-**Conceptos didácticos:**
-- Contrato fuerte con Protobuf.
-- Integración de servicios por RPC tipado.
-
-### Nodos de infraestructura — `infra/docker-compose.yml`
-- `redpanda`: broker Kafka compatible.
-- `kafka-init`: crea topics requeridos.
-- `postgres`: persistencia relacional.
-- Servicios de negocio (`gateway`, `ai-engine`, `core-service`, `dispatch-service`).
+### 1.5 `infra/docker-compose.yml` (runtime graph)
+- Redpanda broker
+- Topic bootstrap job (`kafka-init`)
+- PostgreSQL database
+- Four business services
 
 ---
 
-## 2) Contratos y versionado
+## 2) Contracts-first development model
 
-- `contracts/events/*.json`: JSON Schemas de eventos.
-- `contracts/proto/dispatch.proto`: contrato gRPC.
-- `contracts/openapi/*.yaml`: contratos HTTP mínimos.
+### 2.1 Event contracts
+- `contracts/events/telemetry.raw.v1.json`
+- `contracts/events/anomaly.high_confidence.v1.json`
+- `contracts/events/dispatch.route_assigned.v1.json`
 
-**Regla de oro para clase:**
-1. Primero cambia contrato.
-2. Luego adapta productor.
-3. Luego adapta consumidor.
-4. Finalmente agrega tests/validaciones.
+### 2.2 RPC contract
+- `contracts/proto/dispatch.proto`
+
+### 2.3 HTTP contracts
+- `contracts/openapi/gateway.yaml`
+- `contracts/openapi/core.yaml`
+
+### 2.4 Change protocol to teach students
+1. Update contract first.
+2. Update producers.
+3. Update consumers.
+4. Regenerate gRPC stubs if proto changed.
+5. Verify end-to-end behavior.
 
 ---
 
-## 3) Quickstart
-
-1. (Opcional) copia variables:
+## 3) Local setup
 
 ```bash
 cp .env.example .env
-```
-
-2. Genera stubs gRPC (ya vienen generados, pero puedes regenerarlos):
-
-### Dispatch service
-
-```bash
-docker run --rm -v "$PWD:/ws" -w /ws python:3.12-slim bash -lc \
-  "pip install grpcio-tools==1.66.1 && \
-   python -m grpc_tools.protoc \
-   -I contracts/proto \
-   --python_out=services/dispatch-service/app \
-   --grpc_python_out=services/dispatch-service/app \
-   contracts/proto/dispatch.proto"
-```
-
-### Core service
-
-```bash
-docker run --rm -v "$PWD:/ws" -w /ws python:3.12-slim bash -lc \
-  "pip install grpcio-tools==1.66.1 && \
-   python -m grpc_tools.protoc \
-   -I contracts/proto \
-   --python_out=services/core-service/app \
-   --grpc_python_out=services/core-service/app \
-   contracts/proto/dispatch.proto"
-```
-
-3. Levanta todo:
-
-```bash
 cd infra
 docker compose up --build
 ```
 
+Optional: regenerate gRPC stubs manually.
+
 ---
 
-## 4) Probar flujo end-to-end
+## 4) End-to-end smoke test
 
-1. Enviar reporte:
-
+### 4.1 Publish telemetry through gateway
 ```bash
 curl -X POST http://localhost:8001/v1/emergency/report \
   -H "Content-Type: application/json" \
@@ -145,27 +98,32 @@ curl -X POST http://localhost:8001/v1/emergency/report \
   }'
 ```
 
-2. Revisar logs (`gateway`, `ai-engine`, `core-service`) para ubicar `incident_id`.
-
-3. Consultar incidente:
-
+### 4.2 Retrieve resulting incident
 ```bash
 curl http://localhost:8002/v1/incidents/<INCIDENT_ID>
 ```
 
+Use service logs to correlate by `trace_id`.
+
 ---
 
-## 5) Integración LLM/SLM con LangChain + LangGraph (nuevo)
+## 5) LangGraph evaluator integration (OpenAI, Gemini, Ollama)
 
-El `ai-engine` ahora soporta dos estrategias:
+`ai-engine` evaluator is runtime-selectable:
+- `AI_EVALUATOR_MODE=heuristic` (default, deterministic rules)
+- `AI_EVALUATOR_MODE=langgraph` (LLM/SLM evaluation)
 
-- `AI_EVALUATOR_MODE=heuristic` (por defecto): reglas en Python (`rules.py`).
-- `AI_EVALUATOR_MODE=langgraph`: ejecuta un grafo con nodos de prompt → modelo → parseo.
+### 5.1 LangGraph node design (`services/ai-engine/app/llm_evaluator.py`)
+1. `prompt` node: normalize event + construct strict JSON-output prompt.
+2. `model` node: invoke selected chat provider.
+3. `parse` node: parse JSON and apply safe defaults.
 
-### 5.1 Configuración OpenAI (LLM)
+This keeps model-dependent behavior isolated behind one interface:
+`evaluate(event) -> (category, confidence) | None`
 
-En `.env`:
+### 5.2 Provider configuration
 
+#### OpenAI
 ```bash
 AI_EVALUATOR_MODE=langgraph
 LLM_PROVIDER=openai
@@ -174,10 +132,16 @@ LLM_TEMPERATURE=0.0
 OPENAI_API_KEY=...
 ```
 
-### 5.2 Configuración Ollama (SLM local)
+#### Google Gemini (recommended low-cost/free-tier option)
+```bash
+AI_EVALUATOR_MODE=langgraph
+LLM_PROVIDER=gemini
+LLM_MODEL=gemini-1.5-flash
+LLM_TEMPERATURE=0.0
+GOOGLE_API_KEY=...
+```
 
-En `.env`:
-
+#### Ollama (local SLM)
 ```bash
 AI_EVALUATOR_MODE=langgraph
 LLM_PROVIDER=ollama
@@ -185,31 +149,14 @@ LLM_MODEL=llama3.2:3b
 LLM_TEMPERATURE=0.0
 ```
 
-> Nota: para `ollama`, debes tener runtime/modelo accesible desde el contenedor.
-
-### 5.3 Qué enseñar con esta integración
-
-- Cómo encapsular IA detrás de una interfaz estable (`evaluate(event)`).
-- Por qué usar salida JSON estricta para hacer sistemas robustos.
-- Fallback a heurística si falla el proveedor/modelo.
+> Note: Gemini/OpenAI require valid API keys; Ollama requires reachable local runtime from container.
 
 ---
 
-## 6) Ruta didáctica sugerida para estudiantes
+## 6) Teaching-focused engineering backlog
 
-1. **Sprint 1:** entender contratos y pipeline E2E.
-2. **Sprint 2:** agregar validación de esquemas en runtime.
-3. **Sprint 3:** idempotencia por `event_id` + DLQ.
-4. **Sprint 4:** observabilidad (logs estructurados + métricas).
-5. **Sprint 5:** experimentar `heuristic` vs `langgraph` y comparar precisión/costo/latencia.
-
----
-
-## 7) Próximos pasos de ingeniería
-
-- Propagación explícita de `trace_id` por headers + logs JSON.
-- Idempotencia completa por `event_id` en `core-service`.
-- DLQ para errores de consumo y job de replay.
-- Dashboard SSE/WebSocket para incidentes.
-- Adapter de vector store (Milvus) y storage de evidencia.
-- Tests de contrato automatizados en CI.
+1. Add schema validation at runtime for consumed events.
+2. Add idempotency table keyed by `event_id` in `core-service`.
+3. Add DLQ and replay worker for failed messages.
+4. Add structured JSON logs + metrics (`processing_latency_ms`, `error_count`).
+5. Compare `heuristic` vs `langgraph` by precision/latency/cost.
